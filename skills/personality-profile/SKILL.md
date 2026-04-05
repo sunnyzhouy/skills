@@ -432,6 +432,104 @@ When the user is building a personality assessment feature (not taking a test):
 
 ---
 
+## Phase 5: Save & Export
+
+Every assessment run automatically saves results. Optional flags extend the output.
+
+### Auto-Save (default, always runs)
+
+After generating the report (Phase 4), save all outputs to the skill's results directory:
+
+```
+~/.claude/skills/personality-profile/results/{date}-{slug}/
+├── profile-report.md         # Full 5-framework report
+├── scoring-summary.json      # Structured scoring data
+├── raw-input.md              # Original input text + source context
+├── life-story.md             # Only if Life Story mode was run
+└── meta.json                 # { timestamp, mode, args, source }
+```
+
+**Slug generation**: derive from the subject's name, Enneagram type, or first few words of input. Example: `2026-04-06-reddit-type3w4`, `2026-04-06-isfj-college-student`.
+
+**IRON RULE — Original Text Preservation:**
+The `raw-input.md` file MUST contain the user's COMPLETE original input text, byte-for-byte, with zero modifications. This means:
+- No summarizing, paraphrasing, or "condensing for brevity"
+- No truncating to fit a character limit
+- No rewriting to "clean up" grammar or formatting
+- No omitting sections deemed "less relevant"
+- Preserve all original typos, formatting quirks, section markers (like `/fears:` `/goals:`), and escape characters
+
+If the input is 15,000 characters, `raw-input.md` contains all 15,000 characters. If it's 50,000, it contains 50,000. The original text is sacred data — it is the ground truth for the golden test case, the share page's "Your original post" section, and any future re-analysis. Modifying it in any way invalidates all downstream uses.
+
+**`scoring-summary.json` schema** (must match this exactly for cross-system compatibility):
+```json
+{
+  "source": "skill",
+  "timestamp": "ISO 8601",
+  "enneagram": { "type": 5, "wing": 4, "instinct": "sp", "confidence": "high" },
+  "mbti": "INTJ",
+  "bigFive": { "O": 85, "C": 45, "E": 20, "A": 35, "N": 45 },
+  "disc": { "primary": "C", "secondary": "S" },
+  "attachment": "dismissive-avoidant"
+}
+```
+
+### `--golden` Flag
+
+Usage: `/personality-profile --golden [mode] [input]`
+
+In addition to auto-save, copy results into the project's golden test cases directory:
+
+```
+{project}/api/src/eval/goldenCases/{slug}/
+├── case.json                 # evalRunner-compatible format (GoldenCase interface)
+├── raw-input.md              # Same as results/
+├── skill/
+│   ├── profile-report.md
+│   └── scoring-summary.json
+└── notes.md                  # Auto-generated with key signals + mistype risks
+```
+
+**CRITICAL: `case.json` inputText must be the COMPLETE original text.** Do not summarize, rewrite, or truncate. Copy the exact input verbatim. If the text is 15,000 characters, the JSON file is 15,000 characters. The evalRunner and share page both depend on the unmodified original.
+
+**`case.json` generation**: Extract from scoring-summary to build the `expectedResults` block:
+- `acceptableTypes`: primary type + most likely mistype (from Cross-Framework Insights)
+- `bigFive` ranges: scoring value +/- 10 (normalized to 0-1 scale)
+- `attachment.acceptableStyles`: primary + secondary if confidence is Medium
+
+### `--push` Flag
+
+Usage: `/personality-profile --push [mode] [input]`
+
+After saving, push the profile to the EnneaMe server to create a shareable link:
+
+```bash
+curl -s ${API_URL}/api/import/profile \
+  -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "inputText": "<raw input text>",
+    "skillReport": "<full markdown report>",
+    "scoringSummary": <scoring-summary.json content>,
+    "sourceUrl": "<optional source URL>"
+  }'
+```
+
+`API_URL` defaults to `http://localhost:3001`. Override with env var `ENNEAME_API_URL`.
+
+**CRITICAL: Never truncate inputText.** Send the complete original text, no matter how long. The API accepts up to 1MB. Truncation destroys the share page's "Your original post" section and invalidates the golden case.
+
+Print the share link after successful push:
+```
+Profile pushed! Share link: {API_URL}/share/{shareToken}
+```
+
+### Combining Flags
+
+`/personality-profile --golden --push [mode] [input]` — saves locally, copies to golden cases, AND pushes to server. All three in one run.
+
+---
+
 ## Anti-Patterns
 
 - **Don't be clinical.** This is a conversation, not a medical exam. Warm, curious language throughout.
